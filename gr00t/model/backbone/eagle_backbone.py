@@ -19,6 +19,9 @@ import torch
 from torch import nn
 from transformers import AutoConfig, AutoModel
 from transformers.feature_extraction_utils import BatchFeature
+from sparse_autoencoder import SparseAutoencoder
+from sparse_autoencoder.autoencoder.components import EncoderBlock, DecoderBlock
+from sparse_autoencoder.loss import EntroppyScheduler, SparsityLoss
 
 import gr00t
 from gr00t.model.backbone.eagle2_hg_model.inference_eagle_repo import (
@@ -91,6 +94,8 @@ class EagleBackbone(nn.Module):
         remove_llm: bool = False,
         load_pretrained_det_eagle_path=None,
         use_local_eagle_hg_model: bool = True,
+        use_sae: bool = False,
+        sae_cfg: dict = None,
     ):
         super().__init__()
         self.reproject_vision = reproject_vision
@@ -156,6 +161,35 @@ class EagleBackbone(nn.Module):
 
             if hasattr(vision_towers[1], "vision_tower"):
                 vision_towers[1].vision_tower.head = torch.nn.Identity()
+             
+                
+        # Add Sparse Autoencoder
+        self.use_sae = use_sae
+        if use_sae:
+            self.sae = SparseAutoencoder(
+                n_input_features=1536,  # Match your embedding dimension
+                n_learned_features=sae_cfg.get("n_learned_features", 3072),  # 2x expansion
+                encoder=EncoderBlock(
+                    n_input_features=1536,
+                    n_learned_features=sae_cfg.get("n_learned_features", 3072),
+                    bias=True,
+                ),
+                decoder=DecoderBlock(
+                    n_learned_features=sae_cfg.get("n_learned_features", 3072),
+                    n_input_features=1536,
+                    bias=True,
+                ),
+            )
+            
+            self.entropy_scheduler = EntropyScheduler(
+                initial_entropy=sae_cfg.get("initial_entropy", 3.0),
+                final_entropy=sae_cfg.get("final_entropy", 2.0),
+                n_steps=sae_cfg.get("n_entropy_steps", 1000)
+            )
+            
+            self.sparsity_loss = SparsityLoss(
+                l1_coefficient=sae_cfg.get("l1_coefficient", 1e-3)
+            )
 
     def set_trainable_parameters(self, tune_llm: bool, tune_visual: bool):
         self.tune_llm = tune_llm
@@ -188,6 +222,28 @@ class EagleBackbone(nn.Module):
             input_ids=vl_input["input_ids"],
             attention_mask=vl_input["attention_mask"],
         )
+
+       # Apply SAE if enabled
+        if self.use_sae and self.training:
+            # Get activations and reconstruction
+            encoded_activations = self.sae.encode(embeddings)
+            reconstructed = self.sae.decode(encoded_activations)
+            
+            # Calculate losses
+            recon_loss = torch.nn.functional.mse_loss(reconstructed, embeddings)
+            l1_loss = self.sparsity_loss(encoded_activations)
+            
+            # Store losses for logging
+            self.sae_losses = {
+                "reconstruction_loss": recon_loss.item(),
+                "l1_loss": l1_loss.item(),
+            }
+            
+            # Use reconstructed embeddings
+            embeddings = reconstructed
+        elif self.use_sae:
+            # Inference mode - just encode and decode
+            embeddings = self.sae.decode(self.sae.encode(embeddings))
 
         embeddings = self.linear(embeddings)
 
