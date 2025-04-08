@@ -74,6 +74,20 @@ class DualBrainTrainer(transformers.Trainer):
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         outputs = model(inputs)
         loss = outputs["loss"]
+        
+            # Add SAE losses if enabled
+        if hasattr(model.backbone, "use_sae") and model.backbone.use_sae:
+            sae_recon_loss = model.backbone.sae_losses["reconstruction_loss"]
+            sae_l1_loss = model.backbone.sae_losses["l1_loss"]
+            loss = loss + sae_recon_loss + sae_l1_loss
+            
+            # Log SAE metrics
+            self.log({
+                "sae_reconstruction_loss": sae_recon_loss,
+                "sae_l1_loss": sae_l1_loss,
+                "sae_total_loss": sae_recon_loss + sae_l1_loss
+            })
+        
         return (loss, outputs) if return_outputs else loss
 
     def create_optimizer(self):

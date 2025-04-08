@@ -108,6 +108,25 @@ class Config:
 
     video_backend: str = "decord"
     """Video backend to use for training. [decord, torchvision_av]"""
+    
+    
+    
+    # Add these new SAE parameters after the existing parameters
+    use_sae: bool = False
+    """Whether to use Sparse Auto-Encoder."""
+
+    sae_cfg: dict = None
+    """Configuration for Sparse Auto-Encoder."""
+
+    @staticmethod
+    def default_sae_config():
+        return {
+            "n_learned_features": 3072,
+            "initial_entropy": 3.0,
+            "final_entropy": 2.0,
+            "n_entropy_steps": 1000,
+            "l1_coefficient": 1e-3
+        }
 
 
 #####################################################################################
@@ -141,6 +160,9 @@ def main(config: Config):
         tune_visual=config.tune_visual,  # backbone's vision tower
         tune_projector=config.tune_projector,  # action head's projector
         tune_diffusion_model=config.tune_diffusion_model,  # action head's DiT
+        
+        use_sae=config.use_sae,  # Enable SAE
+        sae_cfg=config.sae_cfg or Config.default_sae_config(),  # SAE configuration
     )
 
     # Set the model's compute_dtype to bfloat16

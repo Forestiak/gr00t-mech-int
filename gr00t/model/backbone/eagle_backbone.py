@@ -190,6 +190,28 @@ class EagleBackbone(nn.Module):
             self.sparsity_loss = SparsityLoss(
                 l1_coefficient=sae_cfg.get("l1_coefficient", 1e-3)
             )
+    
+    # Add to EagleBackbone class
+
+    def get_sae_features(self, embeddings):
+        """Extract and analyze SAE features"""
+        if not self.use_sae:
+            raise ValueError("SAE not enabled")
+            
+        with torch.no_grad():
+            encoded = self.sae.encode(embeddings)
+            
+        # Get feature statistics
+        feature_means = encoded.mean(dim=0)
+        feature_stds = encoded.std(dim=0)
+        sparsity = (encoded == 0).float().mean(dim=0)
+        
+        return {
+            "activations": encoded,
+            "means": feature_means,
+            "stds": feature_stds,
+            "sparsity": sparsity
+        }
 
     def set_trainable_parameters(self, tune_llm: bool, tune_visual: bool):
         self.tune_llm = tune_llm
